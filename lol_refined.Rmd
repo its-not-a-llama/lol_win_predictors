@@ -1,0 +1,183 @@
+---
+title: "lol_refined"
+output: html_document
+---
+Data source: https://www.kaggle.com/datasets/bobbyscience/league-of-legends-diamond-ranked-games-10-min/data (Riot Games)
+
+Abstract
+This study analyzes a dataset of 9,879 League of Legends matches to identify key predictors of team victory. Using logistic regression and random forest models, we evaluate the impact of various in-game metrics, such as kill difference, dragon control, and experience advantage, on the likelihood of winning. The logistic regression model achieved a McFadden's R² of 0.229, indicating a moderate fit, while the random forest model highlighted the significance of these predictors through variable importance plots. ROC analysis further validated model performance, with an AUC of 0.8059, demonstrating strong predictive capability. This comprehensive analysis provides valuable insights into strategic factors influencing match outcomes, offering potential applications in competitive gaming strategy development.
+
+Introduction
+In the fast-paced world of esports, understanding what contributes to a team's victory is crucial for strategy and performance enhancement. This study explores League of Legends (LoL), a popular online game, to identify key factors influencing match outcomes. Utilizing a dataset of 9,879 matches, the research aims to determine which in-game metrics, such as kill difference and dragon control, significantly impact winning.
+
+These metrics are essential for understanding how a team dominates and executes strategies during gameplay. Logistic regression and random forest models are employed to analyze these factors, highlighting their relative importance.
+
+The goal is to provide valuable insights into the game’s dynamics, enabling players to refine strategies and improve their chances of success on the rift.
+
+```{r}
+# Libraries used in this rmd
+library(tidyverse)
+library(here)
+library(janitor)
+library(car)
+library(dplyr)
+library(performance)
+library(randomForest)
+library(vip)
+library(arm)
+library(pROC)
+library(ggplot2)
+```
+
+```{r}
+# Dataframe is imported
+lol_df <- read_csv(here("LOL_data.csv"))
+glimpse(lol_df)
+```
+Feature Engineering
+
+```{r}
+lol_df <- lol_df %>% 
+  # Janitor package used to transform column names for consistency and readability purposes
+  clean_names() %>% 
+  
+  # blue_wins converted to factors for better interpretation and renamed to winning_team
+  mutate(blue_wins = factor(blue_wins, levels = c(0, 1), labels = c("Red", "Blue"))) %>%
+  rename(winning_team = blue_wins) %>% 
+  
+  # blue_first_blood reinterpreted to factors and variable kill_diff created
+  mutate(blue_first_blood = factor(blue_first_blood, levels = c(0, 1), labels = c("Yes", "No"))) %>% 
+  
+  # New variables are created to capture important relationships and improve predictive power
+  mutate(blue_vision_score = blue_wards_placed + blue_wards_destroyed) %>% 
+  mutate(red_vision_score = red_wards_placed + red_wards_destroyed) %>% 
+  mutate(kill_diff = blue_kills - red_kills) %>% 
+  mutate(blue_dragon_diff = blue_dragons - red_dragons) %>% 
+  mutate(blue_cs_diff = blue_total_minions_killed - red_total_minions_killed) %>% 
+  mutate(blue_jgl_cs_diff = blue_total_jungle_minions_killed - red_total_jungle_minions_killed) %>% 
+  mutate(blue_towers_diff = blue_towers_destroyed - red_towers_destroyed) %>% 
+  mutate(blue_vs_diff = blue_vision_score - red_vision_score)
+```
+
+Exploratory Data Analysis
+Visualizations are generated to gain insight into key metrics and their impact of winning outcome.
+
+```{r}
+# Histogram and Density Plot: Gold Difference Distribution
+ggplot(lol_df, aes(x = blue_gold_diff, fill = winning_team)) +
+  geom_histogram(binwidth = 500, color = "black", alpha = 0.7, position = "identity") +
+  geom_density(alpha = 0.3, color = "black") +
+  labs(title = "Gold Difference Distribution by Blue Team's Gold Lead",
+       x = "Gold Difference", y = "Frequency") +
+  scale_fill_manual(values = c("Red" = "red", "Blue" = "blue")) +
+  theme_light() +
+  facet_wrap(~ winning_team)
+
+# Bar Plot: Winning Team by First Blood
+ggplot(lol_df, aes(x = blue_first_blood, fill = winning_team)) +
+  geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5) +
+  labs(title = "Winning Team by First Blood",
+       x = "First Blood",
+       y = "Count") +
+  scale_fill_manual(values = c("Red" = "red", "Blue" = "blue")) +
+  theme_minimal()
+
+# Jitter Plot: Experience Lead by Winning Team
+ggplot(lol_df, aes(x = blue_experience_diff, y = winning_team, color = winning_team)) +
+  geom_jitter(width = 0, height = 0.2, alpha = 0.6, size = 2) +
+  labs(title = "Experience Difference by Winning Team",
+       x = "Experience Difference",
+       y = "Winning Team") +
+  scale_color_manual(values = c("Red" = "#E74C3C", "Blue" = "#3498DB")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title.y = element_text(angle = 0, vjust = 0.5),
+    legend.position = "top"
+  ) +
+  guides(color = guide_legend(title = "Winning Team"))
+
+```
+
+Modelling
+
+```{r}
+# The stepwise approach removes and adds predictors based on AIC score (lower is better) to find the best fitting model. Positive coefficients increase the odd of winning while negative coefficients decrease the odds of winning.
+# The model with lowest AIC is examined as well the characteristics of the predictors to decide which ones to select and if any transformations are needed.
+model <- glm(winning_team ~ ., data = lol_df, family = binomial)
+stepwise_model <- step(model, direction = "both")
+summary(stepwise_model)
+```
+
+```{r}
+# Logistic Regression model is created and results are displayed
+glm5 <- glm(winning_team ~ kill_diff + blue_dragon_diff + blue_cs_diff + blue_jgl_cs_diff + blue_towers_diff + blue_experience_diff, 
+            family = binomial, data = lol_df)
+summary(glm5)
+```
+
+```{r}
+# Calculate McFadden's R-squared
+null_model <- glm(winning_team ~ 1, family = binomial, data = lol_df)
+mcfadden_r2 <- 1 - (logLik(glm5) / logLik(null_model))
+
+# Print McFadden's R-squared
+cat("McFadden's R-squared:", round(mcfadden_r2, 3))
+```
+
+
+```{r}
+# Random Forest is used to capture complex, non-linear interactions and ranks feature importance without assuming a specific relationship form.
+rf <- randomForest(winning_team ~ kill_diff + blue_dragon_diff + blue_cs_diff + blue_jgl_cs_diff + blue_towers_diff + blue_experience_diff, data = lol_df)
+vip(rf)
+```
+```{r}
+# ANOVA is used for understanding the linear relationship and significance of predictors in a parametric model. A higher Chi Sq values indicate that a predictor is more significant
+Anova(glm5)
+```
+
+
+```{r}
+# ggeffect provides predicted probabilities for the winning_team based on different predictors 
+ggeffect(glm5)
+```
+
+
+Model Evaluation and Validation
+
+```{r}
+check_model(glm5)
+```
+
+```{r}
+# ROC curve is produced
+roc(winning_team ~ fitted.values(glm5), data = lol_df,
+    plot = TRUE, print.auc = TRUE)
+```
+
+
+```{r}
+# Training model is created and data is partitioned
+train_model <- glm(winning_team ~ kill_diff + blue_dragon_diff + blue_cs_diff + blue_jgl_cs_diff + blue_dragon_diff + blue_towers_diff + blue_experience_diff, family = binomial, data = lol_df)
+
+set.seed(123)
+training_sample <- c(lol_df$winning_team) %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+training_data <- lol_df[training_sample, ]
+testing_data <- lol_df[- training_sample, ]
+```
+
+```{r}
+# Predicted probabilities for the training and testing datasets are obtained using the training model
+predtrain <- predict(train_model, newdata = training_data, type = "response")
+predtest <- predict(train_model, newdata = testing_data, type = "response")
+
+# Outcome is used to calculate and plot ROC curves for training and testing data as well as visualize corresponding AUC values
+roctrain <- roc(response = training_data$winning_team, predictor = predtrain, plot = TRUE, main = "ROC curve for winning prediction", auc = TRUE)
+roc(response = testing_data$winning_team, predictor = predtest, plot = TRUE, auc = TRUE, add = TRUE, col = 2)
+auc_train <- auc(roctrain)
+auc_test <- auc(roctest)
+legend("bottomright", legend = c(paste("Train AUC =", round(auc_train, 2)), paste("Test AUC =", round(auc_test, 2))), col = c(1, 2), lwd = 2)
+```
+# To be updated...
