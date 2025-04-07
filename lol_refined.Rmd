@@ -2,19 +2,20 @@
 title: "lol_refined"
 output: html_document
 ---
-Data source: https://www.kaggle.com/datasets/bobbyscience/league-of-legends-diamond-ranked-games-10-min/data (Riot Games)
 
-Abstract
+Data source: <https://www.kaggle.com/datasets/bobbyscience/league-of-legends-diamond-ranked-games-10-min/data> (Riot Games)
+
+# Abstract
 This study analyzes a dataset of 9,879 League of Legends matches to identify key predictors of team victory. Using logistic regression and random forest models, we evaluate the impact of various in-game metrics, such as kill difference, dragon control, and experience advantage, on the likelihood of winning. The logistic regression model achieved a McFadden's R² of 0.229, indicating a moderate fit, while the random forest model highlighted the significance of these predictors through variable importance plots. ROC analysis further validated model performance, with an AUC of 0.8059, demonstrating strong predictive capability. This comprehensive analysis provides valuable insights into strategic factors influencing match outcomes, offering potential applications in competitive gaming strategy development.
 
-Introduction
+# Introduction
 In the fast-paced world of esports, understanding what contributes to a team's victory is crucial for strategy and performance enhancement. This study explores League of Legends (LoL), a popular online game, to identify key factors influencing match outcomes. Utilizing a dataset of 9,879 matches, the research aims to determine which in-game metrics, such as kill difference and dragon control, significantly impact winning.
 
 These metrics are essential for understanding how a team dominates and executes strategies during gameplay. Logistic regression and random forest models are employed to analyze these factors, highlighting their relative importance.
 
 The goal is to provide valuable insights into the game’s dynamics, enabling players to refine strategies and improve their chances of success on the rift.
 
-```{r}
+```{r setup, include= FALSE, warning= FALSE}
 # Libraries used in this rmd
 library(tidyverse)
 library(here)
@@ -27,6 +28,9 @@ library(vip)
 library(arm)
 library(pROC)
 library(ggplot2)
+library(ggeffects)
+library(caret)
+library(pROC)
 ```
 
 ```{r}
@@ -34,7 +38,8 @@ library(ggplot2)
 lol_df <- read_csv(here("LOL_data.csv"))
 glimpse(lol_df)
 ```
-Feature Engineering
+
+# Feature Engineering
 
 ```{r}
 lol_df <- lol_df %>% 
@@ -59,8 +64,7 @@ lol_df <- lol_df %>%
   mutate(blue_vs_diff = blue_vision_score - red_vision_score)
 ```
 
-Exploratory Data Analysis
-Visualizations are generated to gain insight into key metrics and their impact of winning outcome.
+Exploratory Data Analysis Visualizations are generated to gain insight into key metrics and their impact of winning outcome.
 
 ```{r}
 # Histogram and Density Plot: Gold Difference Distribution
@@ -100,7 +104,7 @@ ggplot(lol_df, aes(x = blue_experience_diff, y = winning_team, color = winning_t
 
 ```
 
-Modelling
+# Modelling
 
 ```{r}
 # The stepwise approach removes and adds predictors based on AIC score (lower is better) to find the best fitting model. Positive coefficients increase the odd of winning while negative coefficients decrease the odds of winning.
@@ -126,25 +130,23 @@ mcfadden_r2 <- 1 - (logLik(glm5) / logLik(null_model))
 cat("McFadden's R-squared:", round(mcfadden_r2, 3))
 ```
 
-
 ```{r}
 # Random Forest is used to capture complex, non-linear interactions and ranks feature importance without assuming a specific relationship form.
 rf <- randomForest(winning_team ~ kill_diff + blue_dragon_diff + blue_cs_diff + blue_jgl_cs_diff + blue_towers_diff + blue_experience_diff, data = lol_df)
 vip(rf)
 ```
+
 ```{r}
 # ANOVA is used for understanding the linear relationship and significance of predictors in a parametric model. A higher Chi Sq values indicate that a predictor is more significant
 Anova(glm5)
 ```
-
 
 ```{r}
 # ggeffect provides predicted probabilities for the winning_team based on different predictors 
 ggeffect(glm5)
 ```
 
-
-Model Evaluation and Validation
+# Model Evaluation and Validation
 
 ```{r}
 check_model(glm5)
@@ -155,7 +157,6 @@ check_model(glm5)
 roc(winning_team ~ fitted.values(glm5), data = lol_df,
     plot = TRUE, print.auc = TRUE)
 ```
-
 
 ```{r}
 # Training model is created and data is partitioned
@@ -173,11 +174,23 @@ testing_data <- lol_df[- training_sample, ]
 predtrain <- predict(train_model, newdata = training_data, type = "response")
 predtest <- predict(train_model, newdata = testing_data, type = "response")
 
-# Outcome is used to calculate and plot ROC curves for training and testing data as well as visualize corresponding AUC values
+# Calculate and plot ROC curves for training and testing data
 roctrain <- roc(response = training_data$winning_team, predictor = predtrain, plot = TRUE, main = "ROC curve for winning prediction", auc = TRUE)
-roc(response = testing_data$winning_team, predictor = predtest, plot = TRUE, auc = TRUE, add = TRUE, col = 2)
+roctest <- roc(response = testing_data$winning_team, predictor = predtest, plot = TRUE, auc = TRUE, add = TRUE, col = 2)
+
+# Calculate AUC values
 auc_train <- auc(roctrain)
 auc_test <- auc(roctest)
+
+# Add legend
 legend("bottomright", legend = c(paste("Train AUC =", round(auc_train, 2)), paste("Test AUC =", round(auc_test, 2))), col = c(1, 2), lwd = 2)
 ```
-# To be updated...
+
+# Results analysis and Discussion
+
+A logistic regression model is used for it's suitability in dealing with binary classification problems (ie: Win or Lose). The predictors are chosen off the step-wise model to avoid overfitting (capturing unnecessary noise) and to ensure that only significantly contributing predictors are included. This is reflected in the p-values of the predictors, indicating that they are all statistically significant. The model achieved a McFadden's R_sq score of 0.229, this shows that the model can explain 22.9% of the variability for winning, which shows moderate effectiveness.
+
+The ANOVA (analysis of variance) function was used to assess the significance of predictors in logistic regression model, factoring in their linear relationships and statistical significance. The 3 most important predictors were kill_diff, dragon_diff and experience_diff. Random forest was also used to rank the importance of the predictors. However, it does no assume a specific relationship form and is used to capture complex, non-linear relationships. The 3 most important predictors using RF were experience_diff, blue_cs_diff, kill_diff. Both ranking were used to gain a more comprehensive understanding of the predictors using different modelling techniques.
+
+To analyse the efficacy of the model the check_model function was used in combination with training and testing the model.
+The check_model output indicate that model overall appears to fit the data well, with low collinearity and a good distribution of residuals. The predicions seem to be generally accurate, as indicated by the binned residuals and posterior predictive check. The dataset is partitioned into 2 samples; training and testing. The model is trained on the training data and it's performance across the testing data is analyzed. The ROC curves for training and testing data is then generated and the results are as follows: training, testing (0.81, 0.81). These scores indicate that the model possesses a strong ability to identify the winning team on training data as well as generalize quite well to unseen data, making the model reliable with strong predictive capabilities.
